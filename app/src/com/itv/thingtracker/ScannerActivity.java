@@ -28,7 +28,6 @@ import net.sourceforge.zbar.Config;
 
 public class ScannerActivity extends Activity
 {
-
     private Camera mCamera;
     private CameraPreview mPreview;
     private Handler autoFocusHandler;
