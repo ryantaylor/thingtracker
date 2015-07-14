@@ -24,8 +24,10 @@ var server = restify.createServer();
 
 // Define API structure here
 //
+server.use( restify.bodyParser() );
 server.get( '/products', apiRequestProducts );
 server.get( '/products/:id', apiRequestProducts );
+server.post( '/create', apiCreateProduct );
 
 // Connect to mongoDB
 //
@@ -67,4 +69,11 @@ function apiRequestProducts( req, res, next ) {
 
 	console.log( 'processed /products request with id = %s', req.params.id );
 	next();
+}
+
+function apiCreateProduct( req, res, next ) {
+	console.log( 'processed /products/create request with id = %s name = %s', req.body.id, req.body.name );
+	res.send( 200, 'success' );
+	next();
+	//console.log( 'got stuff' );
 }
