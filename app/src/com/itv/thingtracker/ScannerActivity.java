@@ -8,8 +8,11 @@ import android.hardware.Camera;
 import android.os.AsyncTask;
 import android.os.Bundle;
 import android.os.Handler;
+import android.text.InputType;
+import android.util.Log;
 import android.view.View;
 import android.widget.Button;
+import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.TextView;
 import com.itv.thingtracker.models.Product;
@@ -19,6 +22,7 @@ import org.json.JSONObject;
 import java.io.*;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.nio.charset.StandardCharsets;
 
 import net.sourceforge.zbar.ImageScanner;
 import net.sourceforge.zbar.Image;
@@ -34,6 +38,7 @@ public class ScannerActivity extends Activity
 
     //TextView scanText;
     //Button scanButton;
+    EditText input;
     FrameLayout preview;
 
     ImageScanner scanner;
@@ -116,6 +121,7 @@ public class ScannerActivity extends Activity
         }
         catch ( Exception e )
         {
+            e.printStackTrace();
         }
         return c;
     }
@@ -217,7 +223,7 @@ public class ScannerActivity extends Activity
         BufferedReader reader = new BufferedReader( new InputStreamReader( is ) );
         StringBuilder sb = new StringBuilder();
 
-        String line = null;
+        String line;
         try
         {
             while ( ( line = reader.readLine() ) != null )
@@ -243,60 +249,193 @@ public class ScannerActivity extends Activity
         return sb.toString();
     }
 
-    private class APIRequestTask extends AsyncTask<String, Void, String>
+    private class APIRequestTask extends AsyncTask<String, Void, String[]>
     {
-        protected String doInBackground( String... id )
+        protected String[] doInBackground( String... id )
         {
+            URL url;
+            HttpURLConnection connection;
+            InputStream in;
+            String[] result;
+
             try
             {
-                URL url = new URL( "http://192.168.1.10:3000/products/" + id[0] );
-                HttpURLConnection connection = (HttpURLConnection)url.openConnection();
-                InputStream in = new BufferedInputStream( connection.getInputStream() );
+                result = new String[2];
 
-                return convertStreamToString( in );
+                url = new URL( "http://192.168.1.10:3000/products/" + id[0] );
+                connection = (HttpURLConnection)url.openConnection();
+                in = new BufferedInputStream( connection.getInputStream() );
+
+                result[0] = id[0];
+                result[1] = convertStreamToString( in );
+
+                connection.disconnect();
+
+                return result;
             }
             catch ( Exception e )
             {
-                String error = e.getMessage();
+                e.printStackTrace();
+                //connection.disconnect();
             }
 
             return null;
         }
 
-        protected void onPostExecute( String result )
+        // result[0] = UPC ID
+        // result[1] = JSON from server
+        //
+        protected void onPostExecute( String[] result )
         {
             //final TextView outputView = (TextView)findViewById( R.id.requestOutput );
             JSONObject jObject;
             Product product;
+            String message;
 
             try
             {
-                jObject = new JSONObject( result );
-                product = new Product( jObject.getString( "id" ), jObject.getString( "name" ) );
+                jObject = new JSONObject( result[1] );
 
-                String message = new String();
-                message = String.format( "ID: %s\nName: %s", product.getId(), product.getName() );
-                alertBuilder.setMessage( message );
-                alertBuilder.setCancelable( false );
-                alertBuilder.setPositiveButton( "OK", new DialogInterface.OnClickListener()
+                // An empty JSON object means we don't have this product in the db
+                //
+                if ( jObject.length() == 0 )
                 {
-                    @Override
-                    public void onClick( DialogInterface dialogInterface, int i )
-                    {
-                        resetCamera();
-                        dialogInterface.cancel();
-                    }
-                } );
+                    input = new EditText( getBaseContext() );
+                    input.setText( "" );
+                    input.setInputType( InputType.TYPE_CLASS_TEXT );
 
-                AlertDialog alert = alertBuilder.create();
-                alert.show();
+                    message = String.format( "ID: %s\nThis item does not exist. Create?", result[0] );
+                    alertBuilder.setMessage( message );
+                    alertBuilder.setCancelable( true );
+                    alertBuilder.setView( input );
+                    alertBuilder.setPositiveButton( "Create", new DialogInterface.OnClickListener()
+                    {
+                        @Override
+                        public void onClick( DialogInterface dialogInterface, int i )
+                        {
+                            JSONObject jObject;
+
+                            try
+                            {
+                                jObject = new JSONObject();
+
+                                jObject.put( "id", result[0] );
+                                jObject.put( "name", input.getText() );
+
+                                new APICreateProductTask().execute( jObject );
+                            }
+                            catch ( Exception e )
+                            {
+                                e.printStackTrace();
+                                //connection.disconnect();
+                            }
+
+                            resetCamera();
+                            dialogInterface.cancel();
+                        }
+                    } );
+
+                    alertBuilder.setNegativeButton( "Cancel", new DialogInterface.OnClickListener()
+                    {
+                        @Override
+                        public void onClick( DialogInterface dialogInterface, int i )
+                        {
+                            resetCamera();
+                            dialogInterface.cancel();
+                        }
+                    } );
+
+                    AlertDialog alert = alertBuilder.create();
+                    alert.show();
+                }
+                else
+                {
+                    product = new Product( jObject.getString( "id" ), jObject.getString( "name" ) );
+
+                    message = String.format( "ID: %s\nName: %s", product.getId(), product.getName() );
+                    alertBuilder.setMessage( message );
+                    alertBuilder.setCancelable( false );
+                    alertBuilder.setPositiveButton( "OK", new DialogInterface.OnClickListener()
+                    {
+                        @Override
+                        public void onClick( DialogInterface dialogInterface, int i )
+                        {
+                            resetCamera();
+                            dialogInterface.cancel();
+                        }
+                    } );
+
+                    AlertDialog alert = alertBuilder.create();
+                    alert.show();
+                }
 
                 //outputView.setText( product.getName() );
             }
             catch ( Exception e )
             {
-                String error = e.getMessage();
+                e.printStackTrace();
             }
+        }
+    }
+
+    private class APICreateProductTask extends AsyncTask<JSONObject, Void, Void>
+    {
+        protected Void doInBackground( JSONObject... jObject )
+        {
+            URL url;
+            HttpURLConnection connection;
+            OutputStreamWriter out;
+
+            try
+            {
+                url = new URL( "http://192.168.1.10:3000/create" );
+                connection = (HttpURLConnection)url.openConnection();
+                connection.setDoOutput( true );
+                connection.setDoInput( true );
+                connection.setRequestProperty( "Content-Type", "application/json" );
+                connection.setRequestMethod( "POST" );
+
+                out = new OutputStreamWriter( connection.getOutputStream() );
+
+                out.write( jObject[0].toString() );
+                out.flush();
+                out.close();
+
+                int status = connection.getResponseCode();
+
+                System.out.println( status );
+
+                //out = new BufferedWriter( new OutputStreamWriter( connection.getOutputStream() ) );
+
+                //out.write( jObject[0].toString() );
+                //out.write( "test" );
+                //out.flush();
+                //out.close();
+
+                /*OutputStreamWriter writer = new OutputStreamWriter(connection.getOutputStream(), "UTF-8");
+                writer.write(jObject[0].toString());
+                if(writer != null){
+                    writer.flush();
+                    writer.close();
+                }
+
+                Log.d( "thingtracker", "test log" );
+
+                int status = connection.getResponseCode();
+                status = connection.getResponseCode();
+                Log.d( "thingtracker", String.format("%d", status) );*/
+                //InputStream in = connection.getInputStream();
+                //System.out.println( convertStreamToString( in ) );
+
+                //connection.disconnect();
+            }
+            catch ( Exception e )
+            {
+                e.printStackTrace();
+                //connection.disconnect();
+            }
+
+            return null;
         }
     }
 }
